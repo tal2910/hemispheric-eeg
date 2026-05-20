@@ -28,7 +28,7 @@ The reason I picked asyncio for the per-pod TCP serving (rather than threads or 
 
 ## The cluster topology
 
-![Cluster architecture diagram](docs/cluster-architecture.svg)
+![Cluster architecture diagram](cluster-architecture.svg)
 
 Five components, each independently scaled.
 
