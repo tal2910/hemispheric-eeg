@@ -64,5 +64,3 @@ The verbatim text of the original exercise brief is preserved at the bottom for 
 - Test coverage extended to 71 tests, including a dedicated `tests/test_provider_failures.py` that asserts partial stats survive `ConnectionResetError`, `MemoryError`, `OSError`, and the chunk-zero immediate-failure case.
 
 ---
-
-eting this brief and the data team's supplied files.
