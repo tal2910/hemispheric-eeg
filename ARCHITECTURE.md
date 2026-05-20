@@ -28,36 +28,7 @@ The reason I picked asyncio for the per-pod TCP serving (rather than threads or 
 
 ## The cluster topology
 
-```
-                       ┌──────────────────┐
-                       │   Orchestrator   │   (Kubernetes Job, one per
-                       │     (k8s Job)    │    training run)
-                       └────────┬─────────┘
-                                │ creates
-                ┌───────────────┼───────────────┐
-                │               │               │
-                ▼               ▼               ▼
-       ┌────────────────┐ ┌──────────┐ ┌────────────────┐
-       │  Coordinator   │ │ Provider │ │   Consumer     │
-       │   service      │ │  pods    │ │     pods       │
-       │  (work queue)  │ │  (N)     │ │     (M)        │
-       └────────┬───────┘ └────┬─────┘ └───────┬────────┘
-                │              │               │
-                │              │  TCP chunks   │
-                │              └──────────────►│
-                │              ▲               │
-                │              │ pull next     │
-                │              │ chunk ref     │
-                ▼              │               │
-        ┌──────────────┐       │               │
-        │  Object      │◄──────┘               │
-        │  storage     │  read EEG bytes       │
-        │  (S3 / RWX)  │                       │
-        └──────────────┘                       │
-                ▲                              │
-                │                              │
-        Metadata DB ─── visit/file index ──────┘
-```
+![Cluster architecture diagram](docs/cluster-architecture.svg)
 
 Five components, each independently scaled.
 
