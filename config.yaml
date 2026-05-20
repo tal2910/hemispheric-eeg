@@ -1,0 +1,55 @@
+# Hemispheric EEG data infrastructure configuration.
+#
+# Edit this file to change wire format, dataset properties, or runtime defaults.
+# CLI flags override the runtime section per invocation; dataset and wire_protocol
+# values are global and apply to every run.
+#
+# Loader search order (first hit wins):
+#   1. $HEMISPHERIC_CONFIG environment variable
+#   2. ./config.yaml (current working directory)
+#   3. config.yaml next to the hemispheric package
+#   4. Built-in defaults (match the values in this file)
+
+dataset:
+  # Properties of the source EEG data files.
+  sample_rate_hz: 1000        # Samples per second per channel
+  num_channels: 4             # Number of EEG channels per recording
+  dtype: float32              # Data type of each sample (float32 or float64)
+  data_dir: ./data            # Directory containing .npy + .json pairs
+
+wire_protocol:
+  # On-the-wire format settings.
+  # IMPORTANT: chunk_duration_sec drives the training team's batch logic.
+  # Changing it here updates samples_per_chunk, payload bytes, and wire bytes
+  # automatically — no other file needs editing.
+  chunk_duration_sec: 10      # Duration of each TCP chunk in seconds
+  uuid_bytes: 16              # Size of the UUID prefix per chunk (128-bit UUIDv4)
+
+runtime:
+  # Orchestrator runtime defaults. CLI flags override these per run.
+  host: 0.0.0.0               # Provider bind interface
+  ports: [5000, 5001]         # One port per consumer worker
+  consumer_mode: real         # 'real' (subprocess) or 'none' (provider-only)
+  consumer_cmd: null          # null = "python -u consumer.py PORT [PORT ...]"
+  log_level: INFO             # DEBUG | INFO | WARNING | ERROR
+  seed: null                  # null = nondeterministic chunk shuffle
+
+filter:
+  # Subject selection for this training run.
+  # Each field is optional; an empty filter matches every visit.
+  # CLI flags (--gender, --age, ...) override individual fields per run.
+  #
+  # Semantics:
+  #   - Categorical fields (gender, dominant_hand, names, visit_ids, person_ids)
+  #     combine with OR within a field. ['female', 'other'] matches either.
+  #   - age constraints combine with AND. ['>=18', '<65'] is a range.
+  #   - wears_glasses: true = only glasses, false = only no-glasses, null = both.
+
+  description: "Default experiment cohort"
+  gender:        [female]     # OR within the list
+  age:           ['>20']      # AND across constraints; single-quote operators to keep YAML happy
+  dominant_hand: []           # empty = any
+  wears_glasses: null         # null, true, or false
+  visit_ids:     []           # specific UUIDs to include (OR)
+  person_ids:    []           # specific person UUIDs to include (OR)
+  names:         []           # specific person_name values (OR, case-sensitive)
