@@ -10,11 +10,10 @@ Step-by-step instructions to download, install, and run Hemispheric EEG on your 
 2. [Getting the code](#getting-the-code)
 3. [Installation on Windows](#installation-on-windows)
 4. [Installation on macOS and Linux](#installation-on-macos-and-linux)
-5. [First run with bundled sample data](#first-run-with-bundled-sample-data)
-6. [Running with your own dataset](#running-with-your-own-dataset)
-7. [Docker deployment](#docker-deployment)
-8. [Deployment on a remote server](#deployment-on-a-remote-server)
-9. [Troubleshooting](#troubleshooting)
+5. [Add your data, then run](#add-your-data-then-run)
+6. [Docker deployment](#docker-deployment)
+7. [Deployment on a remote server](#deployment-on-a-remote-server)
+8. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -63,6 +62,8 @@ cd hemispheric-eeg
 ```
 
 After extraction your folder should contain `run_training.py`, `consumer.py`, `config.yaml`, plus subdirectories `hemispheric/`, `data/`, and `tests/`. If any are missing, the extraction is incomplete.
+
+**Note:** the `data/` directory ships **empty** — only a placeholder `README.md` and `.gitkeep` are inside. Production EEG datasets are gigabytes per cohort, so we don't ship them in the repo. You'll add your data files in the next section before running.
 
 ---
 
@@ -119,83 +120,119 @@ python -m pytest tests/ -q
 
 ---
 
-## First run with bundled sample data
+## Add your data, then run
 
-The repository ships with 5 sample EEG visits in `./data/`. You can run end-to-end immediately:
+### The repo ships without data — you must add it
 
-```bash
-python run_training.py --gender female --age ">20"
+The `./data/` directory is intentionally empty. Production EEG datasets are too large to ship inside a deployment artifact (a single cohort can be 1–100+ GB), so the repository excludes them entirely. **Before you can run the orchestrator, you have to place your data team's `.npy` + `.json` files into `./data/`.**
+
+Each visit is a pair of files sharing the same UUID filename stem:
+
+```
+data/
+├── <visit-uuid-1>.npy           shape (timesteps, 4) float32 at 1000 Hz
+├── <visit-uuid-1>.json          metadata: visit_id, person_id, person_name,
+│                                age, gender, wears_glasses, date_of_visit,
+│                                dominant_hand
+├── <visit-uuid-2>.npy
+├── <visit-uuid-2>.json
+└── ...
 ```
 
-This will:
-1. Load the 5 bundled visits from `./data/`.
-2. Filter to those matching `gender=female AND age>20` (typically 2 of the 5).
-3. Plan 240 chunks (120 per visit × 2 visits).
-4. Spin up two TCP servers on ports 5000 and 5001.
-5. Spawn the real consumer (`consumer.py`) as a subprocess.
-6. Stream all 240 chunks; both sides exit cleanly in ~12 seconds.
+See `data/README.md` inside the repo for the full schema and a synthetic-data snippet if you want to smoke-test the install without real data.
 
-Expected output:
+### Copy your files in
+
+#### Linux / macOS
+
+```bash
+cp /path/to/your/visits/*.npy ./data/
+cp /path/to/your/visits/*.json ./data/
+```
+
+#### Windows
+
+```cmd
+copy "C:\path\to\your\visits\*.npy" data\
+copy "C:\path\to\your\visits\*.json" data\
+```
+
+#### Alternative: point at data elsewhere (no copying)
+
+If your data lives somewhere else and you'd rather not copy it, edit `config.yaml`:
+
+```yaml
+dataset:
+  data_dir: /path/to/your/visits      # absolute path, anywhere on disk
+```
+
+Then `./data/` can stay empty. The orchestrator reads from whatever `dataset.data_dir` points to.
+
+> Note: `visit_db.json` is **not** something you need to copy or maintain — the orchestrator builds it automatically at startup from the per-visit `.json` sidecars in `./data/`. If you have a `visit_db.json` from elsewhere, ignore it; it'll be regenerated.
+
+### Run
+
+```bash
+python run_training.py
+```
+
+That's the entire command. All parameters (filter cohort, ports, data directory, consumer mode) live in `config.yaml`. The orchestrator will:
+
+1. Check that `./data/` contains visit files (clear error if empty).
+2. Build `visit_db.json` from the per-visit sidecars.
+3. Apply the filter from `config.yaml` (default: `gender=female AND age>20`).
+4. Plan 10-second chunks across the configured ports.
+5. Spin up TCP servers and spawn the data team's `consumer.py` as a subprocess.
+6. Stream all chunks; both sides exit cleanly when done.
+
+Expected output (the numbers depend on how many visits you added):
 
 ```
 [INFO] orchestrator: loaded 5 visits from data
+[INFO] hemispheric.preflight: built visit_db.json with 5 entries from data
 [INFO] orchestrator: applying filter: gender in ['female'], age >20
 [INFO] orchestrator: 2/5 visits matched
-[INFO] orchestrator: planned 240 chunks across 2 ports
+[INFO] orchestrator: planned 240 chunks across 2 ports (per-port: [120, 120])
 [INFO] hemispheric.provider: all 2 ports listening
 [INFO] orchestrator: launching consumer subprocess: python -u consumer.py 5000 5001
-[INFO] Loaded visit_db.json with 99 visits
-[INFO] [Thread-5000] Connected to port 5000
-[INFO] [Thread-5001] Connected to port 5001
 [INFO] Received visit_id ... shape (40000,) on port 5000
 ...
+[INFO] orchestrator: integrity OK: 240/240 chunks streamed across 2 ports (38.4 MB total)
+[INFO] orchestrator: run report written to run-reports/20260520T120000.json
 ```
 
----
+(The example above assumes 5 visits in `./data/`; the actual line counts scale with your dataset size.)
 
-## Running with your own dataset
+If `./data/` is empty, you'll get a friendly error pointing you back to this section:
 
-Replace the bundled samples with your real data:
+```
+No .npy files found in 'data'.
 
-### Linux / macOS
+This repository ships without bundled EEG data because production
+datasets can be hundreds of GB. To run training, place your data
+team's .npy and .json files into 'data'. Each visit needs
+a matched pair sharing the same UUID stem ...
+```
+
+### Smoke-testing without real data
+
+If you want to verify the install before your dataset is ready, generate one synthetic visit:
 
 ```bash
-# Wipe the bundled samples
-rm -f data/*.npy data/*.json
-
-# Copy your visits in
-cp /path/to/your/visits/*.npy data/
-cp /path/to/your/visits/*.json data/
-
-# Replace visit_db.json if needed
-cp /path/to/your/visit_db.json .
-
-# Run
-python run_training.py --gender female --age ">20"
+python -c "
+import json, uuid, numpy as np
+vid = str(uuid.uuid4())
+np.save(f'data/{vid}.npy', np.random.randn(120 * 1000, 4).astype(np.float32))
+json.dump({
+    'visit_id': vid, 'person_id': str(uuid.uuid4()), 'person_name': 'Test Subject',
+    'age': 30, 'gender': 'female', 'wears_glasses': False,
+    'date_of_visit': '2026-01-01', 'dominant_hand': 'right',
+}, open(f'data/{vid}.json', 'w'))
+"
+python run_training.py
 ```
 
-### Windows
-
-```cmd
-:: Wipe the bundled samples
-del data\*.npy data\*.json
-
-:: Copy your visits in
-copy "C:\path\to\your\visits\*.npy" data\
-copy "C:\path\to\your\visits\*.json" data\
-
-:: Replace visit_db.json if needed
-copy "C:\path\to\your\visit_db.json" .
-
-:: Run
-python run_training.py --gender female --age ">20"
-```
-
-Alternatively, leave the bundled data in place and use `--data-dir` to point elsewhere:
-
-```bash
-python run_training.py --data-dir /srv/eeg-data --gender female --age ">20"
-```
+This makes one 2-minute synthetic visit that satisfies the default filter so the pipeline runs end-to-end. Delete the file when done.
 
 ---
 
@@ -211,9 +248,11 @@ docker build -t hemispheric-consumer .
 
 ### Run the consumer in a container
 
+Set `runtime.consumer_mode: none` in `config.yaml` (so the orchestrator doesn't try to spawn its own consumer), then:
+
 ```bash
 # Terminal 1: provider as native Python
-python run_training.py --gender female --age ">20" --no-consumer
+python run_training.py
 
 # Terminal 2: consumer in Docker (Linux only with --network host)
 docker run --rm --network host hemispheric-consumer \
@@ -262,26 +301,26 @@ pip install numpy pyyaml
 
 ```bash
 python -m pytest tests/ -q
-# Should print "65 passed in ~1s"
+# Should print "71 passed in ~1s"
 ```
 
 ### 4. Set up persistent operation
 
-For one-off runs:
+The filter cohort, ports, and consumer mode live in `config.yaml` on the server — edit once, then run. For one-off runs:
 
 ```bash
-python run_training.py --gender female --age ">20"
+python run_training.py
 ```
 
 For background runs that survive your SSH disconnect:
 
 ```bash
 # Using nohup
-nohup python run_training.py --gender female --age ">20" > training.log 2>&1 &
+nohup python run_training.py > training.log 2>&1 &
 
 # Using tmux (recommended)
 tmux new -s training
-python run_training.py --gender female --age ">20"
+python run_training.py
 # Detach: Ctrl+B, then D
 # Reattach later: tmux attach -t training
 
@@ -323,8 +362,9 @@ The consumer on the other machine then connects to `<server-ip>:5000` instead of
 | `python: command not found` | Python not in PATH | Use `python3`, or reinstall Python with "Add to PATH" checked |
 | `Address already in use` on ports 5000/5001 | Previous run didn't release ports | Wait ~30 seconds, or use `--ports 6000 6001` |
 | `Permission denied` binding port | Trying to bind below port 1024 without root | Use ports above 1024 (default 5000+ is fine) |
-| `No matching visits` | Filter didn't match any visit | Loosen the filter, e.g. drop `--age ">20"` |
-| `Visit ID not found in visit_db.json` warnings every chunk | Consumer's hex-vs-hyphen lookup quirk | Documented quirk, data path works fine. Silence by running: `python -c "import json; db=json.load(open('visit_db.json')); json.dump({k.replace('-',''):v for k,v in db.items()}, open('visit_db.json','w'))"` |
+| `No matching visits` | Filter didn't match any visit | Loosen `filter.gender` / `filter.age` in `config.yaml`, or check that the visits you copied actually match the configured cohort |
+| `No .npy files found in 'data'` | Empty data folder; you skipped the "Add your data" step | Copy your `.npy` + `.json` pairs into `./data/`, or point `dataset.data_dir` in `config.yaml` at the right path |
+| `Visit ID not found in visit_db.json` warnings | A visit's UUID isn't in the consumer's lookup table | Should not happen with auto-generated `visit_db.json` — if it does, delete `visit_db.json` and re-run so the orchestrator rebuilds it from your sidecars |
 | `ECONNREFUSED` from consumer | Consumer started before provider bound | Should be impossible with default flow; if you see this, file an issue with the full log |
 | Test failures | Wrong Python version or missing deps | Check `python --version` >= 3.10 and dependencies installed |
 
