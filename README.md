@@ -22,7 +22,7 @@ For platform-specific installation (Windows, macOS, Linux), Docker deployment, a
 
 ## Features
 
-- **Filter language**: `--gender female --age ">20" --dominant-hand right` style flags with OR/AND semantics.
+- **Config-driven filter language**: filter cohorts via `config.yaml` (`gender`, `age`, `dominant_hand`, etc.) with OR/AND semantics for repeatable fields.
 - **Configurable chunking**: 10-second windows by default, change `chunk_duration_sec` in `config.yaml` and every derived value updates.
 - **Streaming over TCP**: fixed-size 160,016-byte chunks; backpressure via `asyncio.StreamWriter.drain()`.
 - **Memory-mapped reads**: 1 GB datasets stream without loading into RAM.
@@ -40,13 +40,21 @@ For platform-specific installation (Windows, macOS, Linux), Docker deployment, a
 
 ## Run it (pick the path that matches your setup)
 
-### The exercise's example command, exactly as written
+### Run the orchestrator
 
 ```bash
-python run_training.py --gender female --age ">20"
+python run_training.py
 ```
 
-Works out of the box. `--data-dir ./data` and `--ports 5000 5001` are defaults; the real `consumer.py` is launched automatically as a subprocess. The only requirements are `numpy` and `pyyaml`.
+That's the entire command. All parameters live in `config.yaml` — filter cohort, ports, data directory, consumer mode, log level. Edit the config, save, run. `--data-dir ./data` and `--ports 5000 5001` are defaults; the real `consumer.py` is launched automatically as a subprocess. The only requirements are `numpy` and `pyyaml`.
+
+To run a different experiment without touching `config.yaml`, point at another config file:
+
+```bash
+HEMISPHERIC_CONFIG=experiments/cohort-young-women.yaml python run_training.py
+```
+
+See the Configuration section below for the full structure of `config.yaml`.
 
 ### Containerized consumer
 
@@ -60,11 +68,11 @@ docker run --rm --network host hemispheric-consumer \
 
 The consumer hardcodes `localhost` as the provider host, so the container needs to share the host network namespace (`--network host`, Linux only) to reach the provider. On macOS or Windows Docker Desktop, run the consumer as local Python (`python consumer.py 5000 5001`) instead.
 
-Typical two-process flow with the consumer in Docker:
+Typical two-process flow with the consumer in Docker (set `runtime.consumer_mode: none` in `config.yaml`, or pass `--no-consumer` for a one-off):
 
 ```bash
 # Terminal 1: provider running locally
-python run_training.py --gender female --age ">20" --no-consumer
+python run_training.py --no-consumer
 
 # Terminal 2: consumer in Docker
 docker run --rm --network host hemispheric-consumer \
@@ -75,18 +83,17 @@ The orchestrator and provider are not containerized in this repo; per the origin
 
 ### Bring your own training process
 
-The default is to launch the provided `consumer.py` as a subprocess. To wire in your real training job instead:
+The default is to launch the provided `consumer.py` as a subprocess. To wire in your real training job instead, set `runtime.consumer_cmd` in `config.yaml` (or pass `--consumer-cmd` for a one-off):
 
 ```bash
-python run_training.py \
-    --consumer-cmd "./train_model --data-ports 5000 5001"
+python run_training.py --consumer-cmd "./train_model --data-ports 5000 5001"
 ```
 
-Or run the provider only and connect from a different machine or process:
+Or run the provider only and connect from a different machine or process (set `runtime.consumer_mode: none` in `config.yaml`, or pass `--no-consumer`):
 
 ```bash
 # host A
-python run_training.py
+python run_training.py --no-consumer
 
 # host B
 python consumer.py 5000 5001    # or your training process
@@ -104,19 +111,22 @@ cp /path/to/your/visits/*.json ./data/
 python run_training.py
 ```
 
-**Option 2: Point at your data without copying anything.**
+**Option 2: Point at your data without copying anything.** Set `dataset.data_dir` in `config.yaml`:
 
-```bash
-python run_training.py --data-dir /path/to/your/visits
+```yaml
+dataset:
+  data_dir: /path/to/your/visits
 ```
 
-**Option 3: Provider locally, consumer in the provided Docker image.**
+Then `python run_training.py`. (For a one-off override without editing the config, the `--data-dir` flag also works.)
+
+**Option 3: Provider locally, consumer in the provided Docker image.** Set `runtime.consumer_mode: none` in `config.yaml`, then:
 
 ```bash
 docker build -t hemispheric-consumer .                                    # build the consumer image
-python run_training.py --no-consumer &                                    # start provider locally
+python run_training.py &                                                   # provider only, per config
 docker run --rm --network host hemispheric-consumer \
-    uv run python -u consumer.py 5000 5001                                # run consumer container
+    uv run python -u consumer.py 5000 5001                                # consumer container
 ```
 
 This matches the data team's original deployment intent: their consumer ships as a Docker image, the orchestrator and provider run on the host.
@@ -131,15 +141,19 @@ What scales with dataset size:
 - **Chunk pointer list.** Around 80 bytes per `ChunkRef` × ~12,000 chunks for 100 visits = ~1 MB.
 - **Per-shard mmap pool.** Each port holds one mmap view per source file it serves. These are virtual memory mappings, not RAM commitments; the kernel pages them in and out as needed.
 
-Expected runtime with the real consumer: it sleeps 0.1 seconds per chunk to simulate training, so a full 12,000-chunk run across 2 ports takes about 10 minutes (`12000 / 2 ports × 0.1s`). Two ways to make a reviewer run faster:
+Expected runtime with the real consumer: it sleeps 0.1 seconds per chunk to simulate training, so a full 12,000-chunk run across 2 ports takes about 10 minutes (`12000 / 2 ports × 0.1s`). Two ways to make a run faster (both via `config.yaml`):
 
-```bash
+```yaml
 # More parallelism via more ports
-python run_training.py --ports 5000 5001 5002 5003
+runtime:
+  ports: [5000, 5001, 5002, 5003]
 
-# Smaller subset via filters
-python run_training.py --age ">=30" --age "<=60"
+# Smaller subset via a tighter filter cohort
+filter:
+  age: ['>=30', '<=60']
 ```
+
+Then `python run_training.py` as usual.
 
 ## The data directory
 
@@ -266,7 +280,9 @@ print(cfg.filter.gender)       # ('female',) by default
 print(cfg.runtime.ports)       # (5000, 5001) by default
 ```
 
-Repeatable flags (the categorical ones combine with OR, numeric with AND); `--wears-glasses` and `--no-glasses` are mutually-exclusive booleans, not repeatable.
+### Ad-hoc CLI overrides
+
+The filter is normally set in `config.yaml`. For one-off explorations without editing the config, the same fields are also available as CLI flags that override the configured value per field. Categorical flags combine with OR on repeat, numeric with AND. `--wears-glasses` and `--no-glasses` are mutually-exclusive booleans, not repeatable.
 
 | Flag | Semantics on repeat | Case-sensitive? | Example |
 |------|---------------------|-----------------|---------|
@@ -279,9 +295,9 @@ Repeatable flags (the categorical ones combine with OR, numeric with AND); `--we
 | `--wears-glasses` | not repeatable | n/a | only include subjects who wear glasses |
 | `--no-glasses` | not repeatable | n/a | only include subjects who don't |
 
-An empty list (the default) means "don't filter on this field" — so `dominant_hand: []` in `config.yaml` matches every hand. To get a single-value filter, use a one-element list. `wears_glasses: null` means "don't filter"; `true` or `false` filters strictly.
+In `config.yaml`, an empty list means "don't filter on this field" — `dominant_hand: []` matches every hand. To get a single-value filter, use a one-element list. `wears_glasses: null` means "don't filter"; `true` or `false` filters strictly.
 
-`--age` accepts comparators `>`, `>=`, `<`, `<=`, `==`, `!=`, `=`, or a bare number (treated as `==`). Quote the value because the shell would otherwise interpret `>` as redirection.
+`--age` accepts comparators `>`, `>=`, `<`, `<=`, `==`, `!=`, `=`, or a bare number (treated as `==`). Quote the value in shell because `>` would otherwise be interpreted as redirection.
 
 ## Wire protocol
 
@@ -389,6 +405,8 @@ Sample structure:
 The `run-reports/` folder is gitignored — it's local-only forensic data, one file per run.
 
 **We do NOT move successful files anywhere, and we do NOT track "already processed" state.** This is a streaming pipeline for training, not an ETL pipeline. The dataset is read-only input you re-run with different filters; mutating its layout on success would break that workflow. There's no notion of "consumed" chunks in a message-broker sense — a chunk being on the wire doesn't mean the training process kept it. Resumability after a partial failure belongs at the orchestration layer (Kubernetes Jobs in the cluster design); the in-process provider's job ends when its socket closes. The integrity summary plus the run report give you everything you need to decide whether to re-run a job.
+
+**Out of scope for this exercise: no checkpoint or resume indicator.** This implementation does not record "we made it this far last time, skip ahead on the next run." Each invocation reads the per-visit sidecars, builds a fresh chunk plan, and streams everything from the start. A failed run is recovered by fixing the cause and re-running the whole job; the cohort gets fully re-streamed rather than picking up where the previous run left off. The design rationale is in the bullet above (training jobs don't benefit from partial resume; cross-run state is a separate problem worth solving at the orchestration layer, not inside the provider). If a real deployment needed sub-job resumability, the natural place to add it is the cluster design in ARCHITECTURE.md — a Redis Streams consumer group with per-message offsets, or a Postgres `visit_runs` table tracking completion — not the in-process orchestrator.
 
 **No retry mechanism, and that's deliberate.** Three reasons we don't retry:
 
