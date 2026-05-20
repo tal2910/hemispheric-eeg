@@ -65,9 +65,4 @@ The verbatim text of the original exercise brief is preserved at the bottom for 
 
 ---
 
-## Original exercise brief (verbatim, for reference)
-
-> AI Platform Engineer - Exercise 1 Data Infrastructure for AI Training [...]
-> Write a tool that orchestrates the training process. The orchestrator gets command line arguments in order to train the model based on a certain filter of the data. For instance: `python run_training.py --gender female --age >20`. [...] Write the data provider process. It should read the data that matches the filters, start a TCP server on the desired ports, and send all of the data as random chunks of 10 seconds. Each chunk should start with the visit ID (it's a UUIDv4, so 128bit) followed by the float32 array. [...] Design your architecture (but don't implement) such that the producers and consumers could run in a cluster.
-
-Everything else followed from interpreting this brief and the data team's supplied files.
+eting this brief and the data team's supplied files.
