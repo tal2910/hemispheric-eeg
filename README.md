@@ -1,6 +1,7 @@
 # Hemispheric EEG Data Infrastructure
 
 A Python orchestrator and TCP data provider for EEG-based deep-learning training. The orchestrator filters subject visits by metadata, the provider serves matching EEG data over TCP as randomly-ordered 10-second chunks, and the data team's `consumer.py` reads those chunks and (in production) trains.
+(just an important notice: please add the data folder with its files(json/npy) after the deployment)
 
 ## Quick start
 
