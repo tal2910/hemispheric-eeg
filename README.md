@@ -79,7 +79,6 @@ The default is to launch the provided `consumer.py` as a subprocess. To wire in 
 
 ```bash
 python run_training.py \
-    --gender female --age ">20" \
     --consumer-cmd "./train_model --data-ports 5000 5001"
 ```
 
@@ -87,7 +86,7 @@ Or run the provider only and connect from a different machine or process:
 
 ```bash
 # host A
-python run_training.py --gender female --no-consumer
+python run_training.py
 
 # host B
 python consumer.py 5000 5001    # or your training process
